@@ -68,7 +68,7 @@ export default function App() {
     handleAutoWriteOpen, handleAutoWriteViewChapters,
     handleAutoWriteFromCompose,
     handleStartChapters,
-    handleContinueBatch,
+    handleWriteNextChapter,
   } = useAutoWriter()
 
   // Load settings and check Python on mount
@@ -94,6 +94,10 @@ export default function App() {
   }, [handleSelectChapter, setAutoWriteMode])
 
   // ── Create project from compose framework ────────────
+
+  const hasMoreChapters = generatedOutline && genPhase === 'done'
+    ? generatedOutline.chapter_outlines.length > genProgress.current
+    : false
 
   const handleCreateFromCompose = useCallback(async (title: string, framework: ComposedFramework, genre?: string) => {
     try {
@@ -171,9 +175,10 @@ export default function App() {
             progress={genProgress}
             logs={genLogs}
             errorMessage={genError}
+            hasMoreChapters={hasMoreChapters}
             onCancel={handleAutoWriteCancel}
             onViewChapters={handleAutoWriteViewChapters}
-            onContinue={handleContinueBatch}
+            onWriteNextChapter={handleWriteNextChapter}
           />
         )}
         {autoWriteMode === 'idle' && !showInnovation && (

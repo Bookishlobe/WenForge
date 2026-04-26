@@ -1,15 +1,17 @@
 interface Props {
-  phase: 'outline' | 'writing' | 'paused' | 'done' | 'error'
+  phase: 'outline' | 'writing' | 'done' | 'error'
   progress: { current: number; total: number }
   logs: string[]
   errorMessage?: string
+  hasMoreChapters?: boolean
   onCancel: () => void
   onViewChapters: () => void
-  onContinue?: () => void
+  onWriteNextChapter?: () => void
 }
 
 export function AutoWritingProgress({
-  phase, progress, logs, errorMessage, onCancel, onViewChapters, onContinue,
+  phase, progress, logs, errorMessage,
+  hasMoreChapters, onCancel, onViewChapters, onWriteNextChapter,
 }: Props) {
   const pct = progress.total > 0
     ? Math.round((progress.current / progress.total) * 100)
@@ -22,8 +24,9 @@ export function AutoWritingProgress({
         <p className="progress-subtitle">
           {phase === 'outline' && '正在构思故事大纲...'}
           {phase === 'writing' && `正在创作第 ${progress.current}/${progress.total} 章...`}
-          {phase === 'paused' && `已完成 ${progress.current}/${progress.total} 章`}
-          {phase === 'done' && '创作完成！'}
+          {phase === 'done' && (hasMoreChapters
+            ? `已完成 ${progress.current} 章，可继续续写`
+            : '创作完成！')}
           {phase === 'error' && '创作过程中出现错误'}
         </p>
       </div>
@@ -80,20 +83,17 @@ export function AutoWritingProgress({
             取消
           </button>
         )}
-        {phase === 'paused' && onContinue && (
+        {phase === 'done' && (
           <>
-            <button className="btn-secondary" onClick={onCancel}>
-              暂停
-            </button>
-            <button className="btn-primary" onClick={onContinue}>
-              继续生成下一批
+            {hasMoreChapters && onWriteNextChapter && (
+              <button className="btn-primary" onClick={onWriteNextChapter}>
+                续写下一章
+              </button>
+            )}
+            <button className={hasMoreChapters ? 'btn-secondary' : 'btn-primary'} onClick={onViewChapters}>
+              📖 查看已生成的章节
             </button>
           </>
-        )}
-        {phase === 'done' && (
-          <button className="btn-primary" onClick={onViewChapters}>
-            📖 查看已生成的章节
-          </button>
         )}
         {phase === 'error' && (
           <button className="btn-primary" onClick={onViewChapters}>

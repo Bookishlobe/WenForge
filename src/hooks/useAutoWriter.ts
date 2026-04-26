@@ -28,17 +28,15 @@ export function useAutoWriter() {
   } = useUiStore()
   const cancelRef = useRef(false)
 
-  // Batch generation state
+  // Generation state
   const batchRef = useRef({
     outline: null as api.StoryOutline | null,
-    chapterOutlines: [] as string[],
+    remainingOutlines: [] as string[],
     summaries: [] as string[],
-    totalChapters: 0,
-    batchSize: 3,
+    nextChapterIndex: 1,
     genre: '',
     style: '',
     chapterLength: 'medium' as string,
-    config: null as AutoWriteConfig | null,
   })
 
   // ── Phase 1: Generate outline → show review ──────────────
@@ -49,7 +47,6 @@ export function useAutoWriter() {
 
     setAutoWriteMode('generating')
     setGenPhase('outline')
-    setGenProgress({ current: 0, total: config.totalChapters })
     addGenLog('开始 AI 自动创作流程...')
     setGenError('')
     cancelRef.current = false
@@ -72,7 +69,6 @@ export function useAutoWriter() {
       const outline = outlineResult.outline
       const chapterOutlines: string[] = outline.chapter_outlines || []
       addGenLog(`大纲完成：${outline.title}（${chapterOutlines.length} 章）`)
-      addGenLog(`世界观：${outline.world_setting || ''}`)
 
       if (cancelRef.current) { setAutoWriteMode('idle'); return }
 
@@ -81,17 +77,15 @@ export function useAutoWriter() {
       setAutoWriteMode('outline_review')
       setGenPhase('outline')
 
-      // Store batch context for later use
+      // Store context for chapter generation
       batchRef.current = {
         outline,
-        chapterOutlines,
+        remainingOutlines: chapterOutlines,
         summaries: [],
-        totalChapters: 0,
-        batchSize: 3,
+        nextChapterIndex: 1,
         genre: currentProject.genre || '玄幻',
         style: config.style,
         chapterLength: config.chapterLength,
-        config,
       }
 
     } catch (err: unknown) {
@@ -102,39 +96,38 @@ export function useAutoWriter() {
     }
   }, [addGenLog, setGenPhase, setGenProgress, setGenError, setAutoWriteMode, setGeneratedOutline])
 
-  // ── Phase 2: Generate chapters in batches ──────────────
+  // ── Phase 2: Generate N chapters (initial 3 or 1-at-a-time) ──
 
-  const doGenerateBatch = useCallback(async () => {
+  const doGenerateBatch = useCallback(async (count: number) => {
     const currentProject = useProjectStore.getState().project
     if (!currentProject) return
 
     const bc = batchRef.current
-    const { outline, chapterOutlines, batchSize, genre, style, chapterLength } = bc
+    const { outline, remainingOutlines, genre, style, chapterLength } = bc
 
-    if (!outline || chapterOutlines.length === 0) {
+    if (!outline || remainingOutlines.length === 0) {
       setGenPhase('done')
-      addGenLog('没有更多章节需要生成')
+      addGenLog('所有章节已生成完毕')
       return
     }
 
-    // Take up to batchSize chapters from the remaining list
-    const batch = chapterOutlines.splice(0, Math.min(batchSize, 3))
-    const currentTotal = bc.summaries.length
-    const grandTotal = bc.totalChapters || chapterOutlines.length + batch.length
+    const batch = remainingOutlines.splice(0, count)
 
     setAutoWriteMode('generating')
     setGenPhase('writing')
+    setGenProgress({ current: 1, total: batch.length })
 
     for (let i = 0; i < batch.length; i++) {
       if (cancelRef.current) {
         addGenLog('⏸ 生成已暂停')
         setAutoWriteMode('idle')
-        batchRef.current.chapterOutlines = [...batch.slice(i), ...chapterOutlines] // put remaining back
+        batchRef.current.remainingOutlines = [...batch.slice(i), ...remainingOutlines]
         return
       }
 
-      const chapterIndex = currentTotal + i + 1
-      setGenProgress({ current: chapterIndex, total: grandTotal })
+      const chapterIndex = bc.nextChapterIndex
+      bc.nextChapterIndex++
+      setGenProgress({ current: i + 1, total: batch.length })
       addGenLog(`正在生成第 ${chapterIndex} 章...`)
 
       try {
@@ -143,11 +136,7 @@ export function useAutoWriter() {
           chapter_index: chapterIndex,
           chapter_outline: batch[i],
           previous_summaries: bc.summaries,
-          config: {
-            genre,
-            style,
-            chapter_length: chapterLength,
-          },
+          config: { genre, style, chapter_length: chapterLength },
         })
 
         if (!chapterResult.success) {
@@ -155,9 +144,8 @@ export function useAutoWriter() {
         }
 
         const title = chapterResult.title || `第${chapterIndex}章`
-        let fileName = ''
         try {
-          fileName = await api.createChapter(currentProject.name, title)
+          const fileName = await api.createChapter(currentProject.name, title)
           await api.saveChapter(currentProject.name, fileName, chapterResult.text)
         } catch (err) {
           addGenLog(`⚠ 保存第 ${chapterIndex} 章失败: ${err}`)
@@ -165,12 +153,7 @@ export function useAutoWriter() {
 
         const summary = chapterResult.text.replace(/#+ .*\n/g, '').trim().slice(0, 150)
         bc.summaries.push(summary)
-
         addGenLog(`✅ 第 ${chapterIndex} 章完成（${chapterResult.text.length} 字）`)
-
-        if (chapterIndex % 3 === 0) {
-          await loadChapters(currentProject.name)
-        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : `第 ${chapterIndex} 章生成失败`
         setGenPhase('error')
@@ -182,41 +165,31 @@ export function useAutoWriter() {
 
     await loadChapters(currentProject.name)
 
-    // Check if there are more chapters to generate
-    if (chapterOutlines.length > 0) {
-      setGenPhase('paused')
-      setGenProgress({ current: grandTotal - chapterOutlines.length, total: grandTotal })
-      addGenLog(`📌 已完成 ${grandTotal - chapterOutlines.length}/${grandTotal} 章，点击继续生成下一批`)
+    const totalDone = bc.summaries.length
+    const remaining = bc.remainingOutlines.length
+    setGenPhase('done')
+    setGenProgress({ current: totalDone, total: totalDone })
+
+    if (remaining > 0) {
+      addGenLog(`🎉 第 ${totalDone} 章完成！还有 ${remaining} 章待续写`)
     } else {
-      setGenPhase('done')
-      setGenProgress({ current: grandTotal, total: grandTotal })
-      addGenLog(`🎉 全部 ${grandTotal} 章创作完成！`)
-      await loadChapters(currentProject.name)
+      addGenLog(`🎉 全部 ${totalDone} 章创作完成！`)
     }
   }, [loadChapters, addGenLog, setGenPhase, setGenProgress, setGenError, setAutoWriteMode])
 
-  // ── Start chapter generation from outline review ──────
+  // ── Start: generate first 3 chapters ──────────────────
 
-  const handleStartChapters = useCallback(async (totalChapters: number, batchSize: number) => {
-    const outline = useUiStore.getState().generatedOutline
-    if (!outline) return
-
-    const allOutlines = outline.chapter_outlines || []
-    const capped = Math.min(totalChapters, allOutlines.length)
-
-    batchRef.current.totalChapters = capped
-    batchRef.current.batchSize = Math.min(Math.max(1, batchSize), 3)
-    batchRef.current.chapterOutlines = allOutlines.slice(0, capped)
-    batchRef.current.summaries = []
-    batchRef.current.outline = outline
-
-    await doGenerateBatch()
+  const handleStartChapters = useCallback(async () => {
+    const bc = batchRef.current
+    const count = Math.min(3, bc.remainingOutlines.length)
+    if (count === 0) return
+    await doGenerateBatch(count)
   }, [doGenerateBatch])
 
-  // ── Continue next batch ──────────────────────────────
+  // ── Continue: write next chapter ──────────────────────
 
-  const handleContinueBatch = useCallback(async () => {
-    await doGenerateBatch()
+  const handleWriteNextChapter = useCallback(async () => {
+    await doGenerateBatch(1)
   }, [doGenerateBatch])
 
   // ── Cancel ───────────────────────────────────────────
@@ -267,6 +240,6 @@ export function useAutoWriter() {
     handleAutoWriteViewChapters,
     handleAutoWriteFromCompose,
     handleStartChapters,
-    handleContinueBatch,
+    handleWriteNextChapter,
   }
 }

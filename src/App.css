@@ -1288,6 +1288,24 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+.outline-badge-active {
+  color: var(--accent-light);
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.outline-chapter-num.outline-chapter-future {
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+
+.outline-chapter-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+  text-align: center;
+}
+
 /* Settings */
 .outline-settings {
   background: var(--bg-surface);
